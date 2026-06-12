@@ -3,7 +3,7 @@ COMPOSE_FILE ?= docker-compose.yml
 COMPOSE_DEV_FILE ?= docker-compose.dev.yml
 DOMAIN ?= leg-api-postbacks.click
 
-.PHONY: help init build up down restart logs ps shell db-push db-shell clean dev dev-down lint rebuild nginx-install ssl-install health
+.PHONY: help init build up down restart logs logs-all ps shell db-push db-shell clean dev dev-down lint rebuild nginx-install nginx-cf ssl-install health
 
 help:
 	@echo "Postback Tracker — Docker commands"
@@ -23,7 +23,8 @@ help:
 	@echo "  make clean         Stop stack and remove volumes"
 	@echo "  make dev           Start dev stack with hot reload"
 	@echo "  make dev-down      Stop dev stack"
-	@echo "  make nginx-install Install nginx config (Ubuntu, sudo)"
+	@echo "  make nginx-install Install nginx + Let's Encrypt config (Ubuntu, sudo)"
+	@echo "  make nginx-cf      Install nginx for Cloudflare Origin Cert (Ubuntu, sudo)"
 	@echo "  make ssl-install   Install Let's Encrypt SSL (Ubuntu, sudo)"
 	@echo "  make lint          Run TypeScript check locally"
 	@echo ""
@@ -89,6 +90,9 @@ health:
 
 nginx-install:
 	sudo DOMAIN=$(DOMAIN) bash deploy/install-nginx.sh
+
+nginx-cf:
+	sudo DOMAIN=$(DOMAIN) bash deploy/install-nginx-cloudflare.sh
 
 ssl-install:
 	@if [ -z "$(EMAIL)" ]; then echo "Usage: make ssl-install EMAIL=your@email.com"; exit 1; fi
