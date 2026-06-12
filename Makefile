@@ -52,6 +52,9 @@ restart:
 	$(COMPOSE) -f $(COMPOSE_FILE) restart app
 
 logs:
+	$(COMPOSE) -f $(COMPOSE_FILE) logs -f app
+
+logs-all:
 	$(COMPOSE) -f $(COMPOSE_FILE) logs -f
 
 ps:
@@ -64,7 +67,7 @@ db-push:
 	$(COMPOSE) -f $(COMPOSE_FILE) run --rm migrate
 
 db-shell:
-	$(COMPOSE) -f $(COMPOSE_FILE) exec db psql -U $${POSTGRES_USER:-postbacks} -d $${POSTGRES_DB:-postbacks}
+	$(COMPOSE) -f $(COMPOSE_FILE) exec db psql -U $$(grep '^POSTGRES_USER=' .env | cut -d= -f2-) -d $$(grep '^POSTGRES_DB=' .env | cut -d= -f2-)
 
 rebuild: init
 	$(COMPOSE) -f $(COMPOSE_FILE) up -d --build
