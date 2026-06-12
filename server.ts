@@ -245,12 +245,14 @@ app.get('/api/auth/telegram/callback', async (req, res) => {
 
     const payload = await verifyIdToken(tokens.id_token, TG_CLIENT_ID);
     const tgId = String(payload.sub || '');
+    console.log('OIDC login attempt:', { sub: payload.sub, claims: payload });
     if (!tgId) {
       return res.redirect('/?auth_error=no_sub');
     }
 
     const users = await db.select().from(adminUsers).where(eq(adminUsers.tg_id, tgId));
     if (users.length === 0) {
+      console.warn(`OIDC: tg_id ${tgId} is not in admin_users`);
       return res.redirect('/?auth_error=not_admin');
     }
 
