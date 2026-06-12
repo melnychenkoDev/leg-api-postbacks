@@ -60,6 +60,7 @@ export default function App() {
   });
 
   const [chats, setChats] = useState<any[]>([]);
+  const [manualChatId, setManualChatId] = useState('');
   const [newRule, setNewRule] = useState<{ partner: string; conversion_types: string[]; target_chat_id: string }>({
     partner: 'default',
     conversion_types: ['*'],
@@ -321,8 +322,34 @@ export default function App() {
             <h1 className="text-2xl font-bold text-gray-900 mb-6">Routing Rules</h1>
 
             <div className="bg-blue-50 border border-blue-200 text-blue-800 rounded-lg p-4 mb-6 text-sm">
-              Добавь бота <span className="font-semibold">@{import.meta.env.VITE_TG_BOT_NAME || 'your_bot'}</span> администратором
-              в канал/группу — он появится в списке ниже автоматически.
+              <p className="mb-2">Добавь бота <span className="font-semibold">@{import.meta.env.VITE_TG_BOT_NAME || 'your_bot'}</span> администратором в канал/группу — он появится в списке ниже автоматически.</p>
+              <p className="text-xs text-blue-600">Если бот уже добавлен, но канал не появился — введи chat_id вручную:</p>
+              <div className="flex gap-2 mt-2">
+                <input
+                  value={manualChatId}
+                  onChange={(e) => setManualChatId(e.target.value)}
+                  placeholder="-1001234567890"
+                  className="border border-blue-300 rounded px-2 py-1 text-sm text-gray-800 w-48"
+                />
+                <button
+                  onClick={async () => {
+                    if (!manualChatId.trim()) return;
+                    try {
+                      const result = await apiFetch('/api/chats', { method: 'POST', body: JSON.stringify({ chat_id: manualChatId.trim() }) });
+                      alert(`Добавлен: ${result.title || result.chat_id}`);
+                      setManualChatId('');
+                      const [rulesData, chatsData] = await Promise.all([apiFetch('/api/rules'), apiFetch('/api/chats')]);
+                      setRules(rulesData);
+                      setChats(chatsData);
+                    } catch (e: any) {
+                      alert('Ошибка: ' + e.message);
+                    }
+                  }}
+                  className="bg-blue-600 text-white rounded px-3 py-1 text-sm hover:bg-blue-700"
+                >
+                  Добавить
+                </button>
+              </div>
             </div>
 
             <div className="bg-white rounded-lg shadow p-6 mb-6 space-y-4">

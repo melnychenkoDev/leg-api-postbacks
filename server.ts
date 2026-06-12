@@ -371,6 +371,34 @@ app.get('/api/chats', authenticateToken, requirePermission('manage_rules'), asyn
   }
 });
 
+// Manually add/verify a chat by ID (for chats added before polling started)
+app.post('/api/chats', authenticateToken, requirePermission('manage_rules'), async (req: AuthRequest, res) => {
+  const { chat_id } = req.body;
+  if (!chat_id) return res.status(400).json({ error: 'chat_id is required' });
+
+  if (!bot) return res.status(500).json({ error: 'Bot not configured' });
+
+  try {
+    const chat = await bot.getChat(String(chat_id)) as any;
+    await db
+      .insert(telegramChats)
+      .values({
+        chat_id: String(chat.id),
+        title: chat.title || chat.username || String(chat.id),
+        type: chat.type,
+        is_active: true,
+        updated_at: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: telegramChats.chat_id,
+        set: { title: chat.title || chat.username || String(chat.id), is_active: true, updated_at: new Date() },
+      });
+    res.json({ chat_id: String(chat.id), title: chat.title || chat.username, type: chat.type });
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message || 'Failed to get chat info. Is the bot an admin there?' });
+  }
+});
+
 // --- ADMIN: ROUTING RULES ---
 app.get('/api/rules', authenticateToken, requirePermission('manage_rules'), async (_req, res) => {
   try {
