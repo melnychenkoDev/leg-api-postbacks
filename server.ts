@@ -244,9 +244,11 @@ app.get('/api/auth/telegram/callback', async (req, res) => {
     }
 
     const payload = await verifyIdToken(tokens.id_token, TG_CLIENT_ID);
-    const tgId = String(payload.sub || '');
-    console.log('OIDC login attempt:', { sub: payload.sub, claims: payload });
+    // Telegram puts the real numeric Telegram user ID in the `id` claim.
+    // `sub` is a pairwise/opaque identifier and must NOT be used for matching.
+    const tgId = String(payload.id || '');
     if (!tgId) {
+      console.warn('OIDC: no `id` claim in id_token', payload);
       return res.redirect('/?auth_error=no_sub');
     }
 
