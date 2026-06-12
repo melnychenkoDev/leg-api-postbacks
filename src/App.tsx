@@ -12,6 +12,7 @@ import {
   BarChart3,
   Search,
   Copy,
+  Settings2,
 } from 'lucide-react';
 
 type Role = 'superadmin' | 'admin' | 'viewer';
@@ -53,11 +54,15 @@ export default function App() {
     date_to: '',
     country: '',
     tg_id: '',
+    tg_username: '',
     trader_id: '',
     click_id: '',
     partner: '',
     type: '',
   });
+
+  const [msgFields, setMsgFields] = useState<string[]>([]);
+  const [allMsgFields, setAllMsgFields] = useState<string[]>([]);
 
   const [chats, setChats] = useState<any[]>([]);
   const [manualChatId, setManualChatId] = useState('');
@@ -154,6 +159,10 @@ export default function App() {
         setAnalytics(await apiFetch('/api/analytics'));
       } else if (activeTab === 'logs' && canAccess(user, 'view_logs')) {
         setLogs(await apiFetch('/api/logs'));
+      } else if (activeTab === 'msg-settings' && canAccess(user, 'manage_rules')) {
+        const data = await apiFetch('/api/message-settings');
+        setMsgFields(data.fields || []);
+        setAllMsgFields(data.allFields || []);
       }
     } catch (e: any) {
       console.error(e);
@@ -255,6 +264,9 @@ export default function App() {
           {canAccess(user, 'manage_admins') && (
             <NavItem icon={<Users />} label="Admins" active={activeTab === 'admins'} onClick={() => setActiveTab('admins')} />
           )}
+          {canAccess(user, 'manage_rules') && (
+            <NavItem icon={<Settings2 />} label="Message Settings" active={activeTab === 'msg-settings'} onClick={() => setActiveTab('msg-settings')} />
+          )}
           {canAccess(user, 'view_logs') && (
             <NavItem icon={<LayoutDashboard />} label="Audit Logs" active={activeTab === 'logs'} onClick={() => setActiveTab('logs')} />
           )}
@@ -302,7 +314,7 @@ export default function App() {
             </div>
 
             <DataTable
-              headers={['Date', 'Type', 'Deposit', 'Country', 'Trader ID', 'Partner', 'TG ID', 'Click ID']}
+              headers={['Date', 'Type', 'Deposit', 'Country', 'Trader ID', 'Partner', 'TG ID', 'TG Username', 'Click ID']}
               rows={leads.map((lead) => [
                 new Date(lead.created_at).toLocaleString(),
                 lead.type,
@@ -311,6 +323,7 @@ export default function App() {
                 lead.trader_id,
                 lead.partner,
                 lead.tg_id,
+                lead.tg_username ? `@${lead.tg_username}` : '—',
                 lead.click_id,
               ])}
             />
@@ -692,7 +705,135 @@ export default function App() {
             />
           </div>
         )}
+
+        {activeTab === 'msg-settings' && canAccess(user, 'manage_rules') && (
+          <MsgSettingsTab
+            msgFields={msgFields}
+            allMsgFields={allMsgFields}
+            onSave={async (fields) => {
+              await apiFetch('/api/message-settings', { method: 'PUT', body: JSON.stringify({ fields }) });
+              setMsgFields(fields);
+            }}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+const FIELD_META: Record<string, { label: string; description: string }> = {
+  type:        { label: 'Тип конверсии',  description: '☑️REG / ✅FTD / ✅🔄DEP / 💸WTD' },
+  trader_id:   { label: 'Trader ID',      description: 'Идентификатор трейдера' },
+  country:     { label: 'Страна (GEO)',   description: 'Гео трейдера' },
+  sumdep:      { label: 'Сумма',          description: 'Сумма депозита / вывода' },
+  tg_id:       { label: 'Telegram ID',    description: 'Числовой ID в Telegram' },
+  tg_username: { label: 'TG Username',    description: 'Никнейм @username в Telegram' },
+  partner:     { label: 'Партнёр',        description: 'Имя партнёрки (partner=)' },
+  click_id:    { label: 'Click ID',       description: 'ID клика (click_id=)' },
+};
+
+function MsgSettingsTab({
+  msgFields,
+  allMsgFields,
+  onSave,
+}: {
+  msgFields: string[];
+  allMsgFields: string[];
+  onSave: (fields: string[]) => Promise<void>;
+}) {
+  const [selected, setSelected] = useState<string[]>(msgFields);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { setSelected(msgFields); }, [msgFields]);
+
+  const toggle = (field: string) => {
+    if (field === 'type') return; // type is always shown
+    setSelected((prev) =>
+      prev.includes(field) ? prev.filter((f) => f !== field) : [...prev, field]
+    );
+    setSaved(false);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const ordered = (allMsgFields.length > 0 ? allMsgFields : Object.keys(FIELD_META)).filter((f) => selected.includes(f));
+      await onSave(ordered);
+      setSaved(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const previewFields = allMsgFields.length > 0 ? allMsgFields : Object.keys(FIELD_META);
+  const preview = previewFields
+    .filter((f) => selected.includes(f))
+    .map((f) => {
+      const examples: Record<string, string> = {
+        type: '✅FTD',
+        trader_id: '🆔12345',
+        country: '🌍UA',
+        sumdep: '💰250',
+        tg_id: '👤987654321',
+        tg_username: '📎@trader_nick',
+        partner: '🤝MyAffiliate',
+        click_id: '🔗abc123',
+      };
+      return examples[f] || f;
+    })
+    .join(' ');
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold text-gray-900 mb-2">Message Settings</h1>
+      <p className="text-gray-500 mb-6 text-sm">Настрой какие поля включать в сообщение Telegram при получении постбека.</p>
+
+      <div className="bg-white rounded-lg shadow p-6 mb-6">
+        <h3 className="font-semibold text-gray-800 mb-4">Поля сообщения</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {(allMsgFields.length > 0 ? allMsgFields : Object.keys(FIELD_META)).map((field) => {
+            const meta = FIELD_META[field] || { label: field, description: '' };
+            const isChecked = selected.includes(field);
+            const isLocked = field === 'type';
+            return (
+              <label
+                key={field}
+                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                  isChecked ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                } ${isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  disabled={isLocked}
+                  onChange={() => toggle(field)}
+                  className="mt-0.5 h-4 w-4 text-blue-600 rounded"
+                />
+                <div>
+                  <div className="font-medium text-sm text-gray-800">{meta.label}</div>
+                  <div className="text-xs text-gray-500">{meta.description}</div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6 mb-6">
+        <h3 className="font-semibold text-gray-800 mb-3">Предпросмотр сообщения</h3>
+        <div className="bg-gray-900 text-green-400 rounded-lg p-4 font-mono text-sm break-all">
+          {preview || <span className="text-gray-500">Выбери хотя бы одно поле</span>}
+        </div>
+      </div>
+
+      <button
+        onClick={handleSave}
+        disabled={saving || selected.length === 0}
+        className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+      >
+        {saving ? 'Сохраняем...' : saved ? '✓ Сохранено' : 'Сохранить настройки'}
+      </button>
     </div>
   );
 }

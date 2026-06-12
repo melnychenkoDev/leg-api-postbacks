@@ -7,6 +7,7 @@ export const leads = pgTable('leads', {
   country: text('country'),
   sumdep: numeric('sumdep'),
   tg_id: text('tg_id'),
+  tg_username: text('tg_username'),
   click_id: text('click_id'),
   partner: text('partner'),
   created_at: timestamp('created_at').defaultNow(),
@@ -64,4 +65,11 @@ export const analyticsIntegrations = pgTable('analytics_integrations', {
   events: jsonb('events').default(['*']),
   is_active: boolean('is_active').default(true),
   created_at: timestamp('created_at').defaultNow(),
+});
+
+// Global message fields config (single row, id=1)
+export const messageSettings = pgTable('message_settings', {
+  id: serial('id').primaryKey(),
+  fields: jsonb('fields').$type<string[]>().default(['type', 'trader_id', 'country', 'sumdep', 'tg_id', 'tg_username', 'partner', 'click_id']),
+  updated_at: timestamp('updated_at').defaultNow(),
 });

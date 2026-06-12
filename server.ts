@@ -17,6 +17,7 @@ import {
   adminLogs,
   apiTokens,
   analyticsIntegrations,
+  messageSettings,
 } from './src/db/schema.js';
 import {
   buildAuthUrl,
@@ -28,7 +29,7 @@ import {
 import { hasPermission, type AuthUser, type Permission, type Role } from './src/lib/permissions.js';
 import { parseLeadFilters, queryLeads } from './src/lib/leads-query.js';
 import { forwardToAnalytics } from './src/lib/analytics.js';
-import { formatPostbackMessage, routeTelegramNotifications } from './src/lib/postback.js';
+import { formatPostbackMessage, routeTelegramNotifications, DEFAULT_MESSAGE_FIELDS, ALL_MESSAGE_FIELDS, type PostbackParams } from './src/lib/postback.js';
 import { registerChatTracker, listActiveChats } from './src/lib/chat-tracker.js';
 
 dotenv.config();
@@ -140,6 +141,24 @@ const ensureSuperAdmin = async () => {
 
 ensureSuperAdmin();
 
+// Cache message fields (invalidated on settings update)
+let cachedMessageFields: string[] | null = null;
+
+async function getMessageFields(): Promise<string[]> {
+  if (cachedMessageFields) return cachedMessageFields;
+  try {
+    const rows = await db.select().from(messageSettings);
+    if (rows.length > 0 && Array.isArray(rows[0].fields)) {
+      cachedMessageFields = rows[0].fields as string[];
+    } else {
+      cachedMessageFields = DEFAULT_MESSAGE_FIELDS;
+    }
+  } catch {
+    cachedMessageFields = DEFAULT_MESSAGE_FIELDS;
+  }
+  return cachedMessageFields;
+}
+
 // --- POSTBACK ---
 app.all('/api/postback', async (req, res) => {
   const params = { ...req.query, ...req.body };
@@ -149,44 +168,29 @@ app.all('/api/postback', async (req, res) => {
   const country = String(params.country || 'N/A');
   const sumdep = String(params.sumdep || '0');
   const tg_id = String(params.tg_id || 'N/A');
+  const tg_username = String(params.tg_username || params.username || 'N/A');
   const click_id = String(params.click_id || 'N/A');
   const partner = String(params.partner || 'default');
 
-  if (!type) {
-    return res.status(400).send('type is required');
-  }
+  if (!type) return res.status(400).send('type is required');
 
   const knownTypes = ['REG', 'FTD', 'DEP', 'WTD'];
-  if (!knownTypes.includes(type)) {
-    return res.status(400).send('unknown type');
-  }
+  if (!knownTypes.includes(type)) return res.status(400).send('unknown type');
 
   try {
     const [savedLead] = await db
       .insert(leads)
-      .values({
-        type,
-        trader_id,
-        country,
-        sumdep,
-        tg_id,
-        click_id,
-        partner,
-      })
+      .values({ type, trader_id, country, sumdep, tg_id, tg_username, click_id, partner })
       .returning();
 
-    const text = formatPostbackMessage({ type, trader_id, country, sumdep, tg_id });
+    const pbParams: PostbackParams = { type, trader_id, country, sumdep, tg_id, tg_username, click_id, partner };
+    const fields = await getMessageFields();
+    const text = formatPostbackMessage(pbParams, fields);
 
     await routeTelegramNotifications(bot, BOT_TOKEN, partner, type, text);
 
     forwardToAnalytics({
-      type,
-      trader_id,
-      country,
-      sumdep,
-      tg_id,
-      click_id,
-      partner,
+      type, trader_id, country, sumdep, tg_id, click_id, partner,
       created_at: savedLead.created_at || new Date(),
     });
 
@@ -646,6 +650,41 @@ app.delete('/api/analytics/:id', authenticateToken, requirePermission('manage_an
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: 'Failed to delete integration' });
+  }
+});
+
+// --- ADMIN: MESSAGE SETTINGS ---
+app.get('/api/message-settings', authenticateToken, requirePermission('manage_rules'), async (_req, res) => {
+  try {
+    const rows = await db.select().from(messageSettings);
+    if (rows.length > 0) {
+      res.json({ fields: rows[0].fields, allFields: ALL_MESSAGE_FIELDS });
+    } else {
+      res.json({ fields: DEFAULT_MESSAGE_FIELDS, allFields: ALL_MESSAGE_FIELDS });
+    }
+  } catch {
+    res.status(500).json({ error: 'Database connection failed' });
+  }
+});
+
+app.put('/api/message-settings', authenticateToken, requirePermission('manage_rules'), async (req: AuthRequest, res) => {
+  const { fields } = req.body;
+  if (!Array.isArray(fields) || fields.length === 0) {
+    return res.status(400).json({ error: 'fields must be a non-empty array' });
+  }
+  const validFields = fields.filter((f: string) => ALL_MESSAGE_FIELDS.includes(f));
+  try {
+    const rows = await db.select().from(messageSettings);
+    if (rows.length > 0) {
+      await db.update(messageSettings).set({ fields: validFields, updated_at: new Date() }).where(eq(messageSettings.id, rows[0].id));
+    } else {
+      await db.insert(messageSettings).values({ fields: validFields });
+    }
+    cachedMessageFields = validFields;
+    await logAdminAction(req.user!.id, 'UPDATE_MESSAGE_SETTINGS', { fields: validFields });
+    res.json({ fields: validFields });
+  } catch {
+    res.status(500).json({ error: 'Failed to save settings' });
   }
 });
 

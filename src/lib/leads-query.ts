@@ -7,6 +7,7 @@ export interface LeadFilters {
   date_to?: string;
   country?: string;
   tg_id?: string;
+  tg_username?: string;
   trader_id?: string;
   click_id?: string;
   partner?: string;
@@ -20,6 +21,7 @@ export async function queryLeads(filters: LeadFilters = {}) {
   if (filters.date_to) conditions.push(lte(leads.created_at, new Date(filters.date_to)));
   if (filters.country) conditions.push(eq(leads.country, filters.country));
   if (filters.tg_id) conditions.push(eq(leads.tg_id, filters.tg_id));
+  if (filters.tg_username) conditions.push(eq(leads.tg_username, filters.tg_username));
   if (filters.trader_id) conditions.push(eq(leads.trader_id, filters.trader_id));
   if (filters.click_id) conditions.push(eq(leads.click_id, filters.click_id));
   if (filters.partner) conditions.push(eq(leads.partner, filters.partner));
@@ -45,6 +47,7 @@ export function parseLeadFilters(query: Record<string, unknown>): LeadFilters {
     date_to: pick('date_to'),
     country: pick('country'),
     tg_id: pick('tg_id'),
+    tg_username: pick('tg_username'),
     trader_id: pick('trader_id'),
     click_id: pick('click_id'),
     partner: pick('partner'),
