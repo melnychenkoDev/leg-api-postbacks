@@ -17,7 +17,13 @@ import {
   apiTokens,
   analyticsIntegrations,
 } from './src/db/schema.js';
-import { verifyTelegramLoginWidget } from './src/lib/telegram-auth.js';
+import {
+  buildAuthUrl,
+  createPkce,
+  exchangeCode,
+  randomState,
+  verifyIdToken,
+} from './src/lib/telegram-oidc.js';
 import { hasPermission, type AuthUser, type Permission, type Role } from './src/lib/permissions.js';
 import { parseLeadFilters, queryLeads } from './src/lib/leads-query.js';
 import { forwardToAnalytics } from './src/lib/analytics.js';
@@ -35,6 +41,23 @@ const PORT = Number(process.env.PORT) || 3000;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
 const SUPER_ADMIN_ID = process.env.SUPER_ADMIN_TG_ID || '6730949764';
+
+// Telegram OpenID Connect (new Login Widget 2.0)
+const TG_CLIENT_ID = process.env.TELEGRAM_CLIENT_ID || '';
+const TG_CLIENT_SECRET = process.env.TELEGRAM_CLIENT_SECRET || '';
+const DOMAIN = process.env.DOMAIN || `localhost:${PORT}`;
+const PUBLIC_BASE_URL =
+  process.env.PUBLIC_BASE_URL || (DOMAIN.startsWith('localhost') ? `http://${DOMAIN}` : `https://${DOMAIN}`);
+const OIDC_REDIRECT_URI = `${PUBLIC_BASE_URL}/api/auth/telegram/callback`;
+
+// Short-lived store for PKCE verifier + state (single-instance)
+const oauthStateStore = new Map<string, { verifier: string; exp: number }>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of oauthStateStore) {
+    if (value.exp < now) oauthStateStore.delete(key);
+  }
+}, 60_000).unref();
 
 const bot = BOT_TOKEN ? new TelegramBot(BOT_TOKEN, { polling: false }) : null;
 
@@ -169,41 +192,89 @@ app.all('/api/postback', async (req, res) => {
   }
 });
 
-// --- AUTH ---
-app.post('/api/auth/telegram', async (req, res) => {
-  const data = req.body;
-
-  if (!BOT_TOKEN) {
-    return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN not configured' });
+// --- AUTH (Telegram OpenID Connect) ---
+// Step 1: redirect user to Telegram authorization endpoint
+app.get('/api/auth/telegram/login', async (_req, res) => {
+  if (!TG_CLIENT_ID || !TG_CLIENT_SECRET) {
+    return res.status(500).send('TELEGRAM_CLIENT_ID / TELEGRAM_CLIENT_SECRET not configured');
   }
-
-  if (!verifyTelegramLoginWidget(data, BOT_TOKEN)) {
-    return res.status(401).json({ error: 'Invalid authentication' });
-  }
-
-  const tgId = data.id.toString();
 
   try {
+    const state = randomState();
+    const { verifier, challenge } = createPkce();
+    oauthStateStore.set(state, { verifier, exp: Date.now() + 10 * 60_000 });
+
+    const url = await buildAuthUrl({
+      clientId: TG_CLIENT_ID,
+      redirectUri: OIDC_REDIRECT_URI,
+      scope: 'openid profile',
+      state,
+      challenge,
+    });
+
+    res.redirect(url);
+  } catch (error) {
+    console.error('OIDC login error', error);
+    res.status(500).send('Failed to start login');
+  }
+});
+
+// Step 2: callback — exchange code, verify id_token, issue app JWT
+app.get('/api/auth/telegram/callback', async (req, res) => {
+  const code = typeof req.query.code === 'string' ? req.query.code : '';
+  const state = typeof req.query.state === 'string' ? req.query.state : '';
+
+  const entry = oauthStateStore.get(state);
+  if (!code || !entry || entry.exp < Date.now()) {
+    return res.redirect('/?auth_error=invalid_state');
+  }
+  oauthStateStore.delete(state);
+
+  try {
+    const tokens = await exchangeCode({
+      code,
+      redirectUri: OIDC_REDIRECT_URI,
+      clientId: TG_CLIENT_ID,
+      clientSecret: TG_CLIENT_SECRET,
+      verifier: entry.verifier,
+    });
+
+    if (!tokens.id_token) {
+      return res.redirect('/?auth_error=no_id_token');
+    }
+
+    const payload = await verifyIdToken(tokens.id_token, TG_CLIENT_ID);
+    const tgId = String(payload.sub || '');
+    if (!tgId) {
+      return res.redirect('/?auth_error=no_sub');
+    }
+
     const users = await db.select().from(adminUsers).where(eq(adminUsers.tg_id, tgId));
     if (users.length === 0) {
-      return res.status(403).json({ error: 'User is not an admin' });
+      return res.redirect('/?auth_error=not_admin');
     }
 
     const user = users[0];
+    const displayName =
+      user.name ||
+      (typeof payload.name === 'string' ? payload.name : '') ||
+      (typeof payload.preferred_username === 'string' ? payload.preferred_username : '') ||
+      'Admin';
+
     const authUser: AuthUser = {
       id: user.tg_id,
       role: user.role as Role,
-      name: user.name || data.first_name || 'Admin',
+      name: displayName,
       permissions: (user.permissions as Permission[]) || undefined,
     };
 
     const token = jwt.sign(authUser, JWT_SECRET, { expiresIn: '24h' });
+    await logAdminAction(user.tg_id, 'LOGIN', { ip: req.ip, method: 'oidc' });
 
-    await logAdminAction(user.tg_id, 'LOGIN', { ip: req.ip });
-
-    res.json({ token, user: authUser });
-  } catch {
-    res.status(500).json({ error: 'Database error' });
+    res.redirect(`/?token=${encodeURIComponent(token)}`);
+  } catch (error) {
+    console.error('OIDC callback error', error);
+    res.redirect('/?auth_error=server_error');
   }
 });
 

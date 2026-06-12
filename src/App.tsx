@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { TelegramLoginWidget } from './components/TelegramLoginWidget';
 import {
   LayoutDashboard,
   Users,
@@ -84,6 +83,28 @@ export default function App() {
   );
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlToken = params.get('token');
+    const authError = params.get('auth_error');
+
+    if (urlToken) {
+      localStorage.setItem('token', urlToken);
+      setToken(urlToken);
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (authError) {
+      const messages: Record<string, string> = {
+        not_admin: 'Этот Telegram-аккаунт не админ.',
+        invalid_state: 'Сессия входа истекла, попробуйте ещё раз.',
+        no_id_token: 'Telegram не вернул id_token.',
+        no_sub: 'Не удалось получить Telegram ID.',
+        server_error: 'Ошибка сервера при входе.',
+      };
+      alert(messages[authError] || `Auth error: ${authError}`);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!token) return;
     fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
@@ -135,26 +156,6 @@ export default function App() {
     loadTab();
   }, [loadTab]);
 
-  const handleAuth = async (tgUser: any) => {
-    try {
-      const res = await fetch('/api/auth/telegram', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(tgUser),
-      });
-      const data = await res.json();
-      if (res.ok && data.token) {
-        localStorage.setItem('token', data.token);
-        setToken(data.token);
-        setUser(data.user);
-      } else {
-        alert('Auth failed: ' + (data.error || 'Unknown'));
-      }
-    } catch {
-      alert('Error during auth');
-    }
-  };
-
   const handleTestLogin = async () => {
     try {
       const res = await fetch('/api/auth/test', { method: 'POST' });
@@ -200,7 +201,15 @@ export default function App() {
           <ShieldPlus className="mx-auto h-12 w-12 text-blue-600 mb-4" />
           <h2 className="text-center text-3xl font-extrabold text-gray-900 mb-6">Postback Admin</h2>
           <p className="text-gray-500 mb-6">Login with your authorized Telegram account.</p>
-          <TelegramLoginWidget onAuth={handleAuth} />
+          <a
+            href="/api/auth/telegram/login"
+            className="bg-[#229ED9] hover:bg-[#1c8dc2] text-white px-6 py-3 rounded-md w-full transition-colors font-medium flex items-center justify-center"
+          >
+            <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.161l-1.97 9.293c-.146.658-.537.818-1.089.51l-3.012-2.22-1.453 1.398c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.121l-6.871 4.326-2.962-.924c-.643-.203-.657-.643.135-.953l11.57-4.461c.538-.196 1.006.121.832.948z" />
+            </svg>
+            Войти через Telegram
+          </a>
 
           <div className="mt-8 border-t pt-6 text-sm text-gray-400 w-full">
             <p className="mb-4">Dev mode only</p>
