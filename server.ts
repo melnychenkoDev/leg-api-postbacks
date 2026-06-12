@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
 import { stringify } from 'csv-stringify/sync';
 import TelegramBot from 'node-telegram-bot-api';
 import * as dotenv from 'dotenv';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, ilike, or, sql, count } from 'drizzle-orm';
 
 import { db } from './src/db/index.js';
 import {
@@ -689,10 +689,39 @@ app.put('/api/message-settings', authenticateToken, requirePermission('manage_ru
 });
 
 // --- ADMIN: LOGS ---
-app.get('/api/logs', authenticateToken, requirePermission('view_logs'), async (_req, res) => {
+app.get('/api/logs', authenticateToken, requirePermission('view_logs'), async (req, res) => {
+  const page = Math.max(1, parseInt(String(req.query.page || '1'), 10));
+  const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || '50'), 10)));
+  const search = String(req.query.search || '').trim();
+  const offset = (page - 1) * limit;
+
   try {
-    const logs = await db.select().from(adminLogs).orderBy(desc(adminLogs.created_at)).limit(200);
-    res.json(logs);
+    const searchCondition = search
+      ? or(
+          ilike(adminLogs.action, `%${search}%`),
+          ilike(adminLogs.admin_tg_id, `%${search}%`),
+          sql`${adminLogs.details}::text ilike ${'%' + search + '%'}`
+        )
+      : undefined;
+
+    const [totalResult, rows] = await Promise.all([
+      db.select({ total: count() }).from(adminLogs).where(searchCondition),
+      db
+        .select()
+        .from(adminLogs)
+        .where(searchCondition)
+        .orderBy(desc(adminLogs.created_at))
+        .limit(limit)
+        .offset(offset),
+    ]);
+
+    res.json({
+      data: rows,
+      total: totalResult[0]?.total ?? 0,
+      page,
+      limit,
+      pages: Math.ceil((totalResult[0]?.total ?? 0) / limit),
+    });
   } catch {
     res.status(500).json({ error: 'Database connection failed' });
   }

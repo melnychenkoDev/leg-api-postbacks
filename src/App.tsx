@@ -46,6 +46,9 @@ export default function App() {
   const [rules, setRules] = useState<any[]>([]);
   const [admins, setAdmins] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const [logsMeta, setLogsMeta] = useState({ total: 0, page: 1, pages: 1 });
+  const [logsSearch, setLogsSearch] = useState('');
+  const [logsPage, setLogsPage] = useState(1);
   const [apiTokens, setApiTokens] = useState<any[]>([]);
   const [analytics, setAnalytics] = useState<any[]>([]);
 
@@ -158,7 +161,9 @@ export default function App() {
       } else if (activeTab === 'analytics' && canAccess(user, 'manage_analytics')) {
         setAnalytics(await apiFetch('/api/analytics'));
       } else if (activeTab === 'logs' && canAccess(user, 'view_logs')) {
-        setLogs(await apiFetch('/api/logs'));
+        const d = await apiFetch(`/api/logs?page=${logsPage}&limit=50&search=${encodeURIComponent(logsSearch)}`);
+        setLogs(d.data || []);
+        setLogsMeta({ total: d.total || 0, page: d.page || 1, pages: d.pages || 1 });
       } else if (activeTab === 'msg-settings' && canAccess(user, 'manage_rules')) {
         const data = await apiFetch('/api/message-settings');
         setMsgFields(data.fields || []);
@@ -167,7 +172,7 @@ export default function App() {
     } catch (e: any) {
       console.error(e);
     }
-  }, [activeTab, token, user, apiFetch, loadLeads]);
+  }, [activeTab, token, user, apiFetch, loadLeads, logsPage, logsSearch]);
 
   useEffect(() => {
     loadTab();
@@ -691,18 +696,88 @@ export default function App() {
 
         {activeTab === 'logs' && (
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-6">Audit Logs</h1>
+            <div className="flex justify-between items-center mb-6">
+              <h1 className="text-2xl font-bold text-gray-900">Audit Logs</h1>
+              <span className="text-sm text-gray-500">Всего: {logsMeta.total}</span>
+            </div>
+
+            <div className="bg-white rounded-lg shadow p-4 mb-4 flex gap-3 items-center">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  value={logsSearch}
+                  onChange={(e) => { setLogsSearch(e.target.value); setLogsPage(1); }}
+                  placeholder="Поиск по действию, admin ID, деталям..."
+                  className="border rounded pl-9 pr-3 py-2 text-sm w-full"
+                />
+              </div>
+              {logsSearch && (
+                <button
+                  onClick={() => { setLogsSearch(''); setLogsPage(1); }}
+                  className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 border rounded"
+                >
+                  Сбросить
+                </button>
+              )}
+            </div>
+
             <DataTable
-              headers={['Time', 'Admin', 'Action', 'Details']}
+              headers={['Время', 'Admin TG ID', 'Действие', 'Детали']}
               rows={logs.map((l) => [
                 new Date(l.created_at).toLocaleString(),
                 l.admin_tg_id,
-                l.action,
-                <pre key={l.id} className="text-xs whitespace-pre-wrap">
-                  {JSON.stringify(l.details)}
+                <span key={l.id} className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                  l.action.startsWith('DELETE') ? 'bg-red-100 text-red-700' :
+                  l.action.startsWith('CREATE') || l.action.startsWith('ADD') ? 'bg-green-100 text-green-700' :
+                  l.action.startsWith('UPDATE') ? 'bg-blue-100 text-blue-700' :
+                  'bg-gray-100 text-gray-700'
+                }`}>{l.action}</span>,
+                <pre key={`d-${l.id}`} className="text-xs whitespace-pre-wrap max-w-xs overflow-auto text-gray-600">
+                  {JSON.stringify(l.details, null, 2)}
                 </pre>,
               ])}
             />
+
+            {logsMeta.pages > 1 && (
+              <div className="flex items-center justify-center gap-2 mt-4">
+                <button
+                  onClick={() => setLogsPage(1)}
+                  disabled={logsPage === 1}
+                  className="px-3 py-1 rounded border text-sm disabled:opacity-40 hover:bg-gray-50"
+                >«</button>
+                <button
+                  onClick={() => setLogsPage((p) => Math.max(1, p - 1))}
+                  disabled={logsPage === 1}
+                  className="px-3 py-1 rounded border text-sm disabled:opacity-40 hover:bg-gray-50"
+                >‹</button>
+                {Array.from({ length: Math.min(7, logsMeta.pages) }, (_, i) => {
+                  const half = 3;
+                  let start = Math.max(1, logsPage - half);
+                  const end = Math.min(logsMeta.pages, start + 6);
+                  start = Math.max(1, end - 6);
+                  const p = start + i;
+                  if (p > logsMeta.pages) return null;
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setLogsPage(p)}
+                      className={`px-3 py-1 rounded border text-sm ${logsPage === p ? 'bg-blue-600 text-white border-blue-600' : 'hover:bg-gray-50'}`}
+                    >{p}</button>
+                  );
+                })}
+                <button
+                  onClick={() => setLogsPage((p) => Math.min(logsMeta.pages, p + 1))}
+                  disabled={logsPage === logsMeta.pages}
+                  className="px-3 py-1 rounded border text-sm disabled:opacity-40 hover:bg-gray-50"
+                >›</button>
+                <button
+                  onClick={() => setLogsPage(logsMeta.pages)}
+                  disabled={logsPage === logsMeta.pages}
+                  className="px-3 py-1 rounded border text-sm disabled:opacity-40 hover:bg-gray-50"
+                >»</button>
+                <span className="text-sm text-gray-500 ml-2">стр. {logsPage} / {logsMeta.pages}</span>
+              </div>
+            )}
           </div>
         )}
 
