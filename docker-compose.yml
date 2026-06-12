@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postbacks}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postbacks}
+      POSTGRES_DB: ${POSTGRES_DB:-postbacks}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postbacks} -d ${POSTGRES_DB:-postbacks}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  migrate:
+    build:
+      context: .
+      target: builder
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postbacks}:${POSTGRES_PASSWORD:-postbacks}@db:5432/${POSTGRES_DB:-postbacks}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["npx", "drizzle-kit", "push"]
+
+  app:
+    build:
+      context: .
+      target: runner
+      args:
+        VITE_TG_BOT_NAME: ${VITE_TG_BOT_NAME:-}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://${POSTGRES_USER:-postbacks}:${POSTGRES_PASSWORD:-postbacks}@db:5432/${POSTGRES_DB:-postbacks}
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:

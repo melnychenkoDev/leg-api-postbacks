@@ -1,0 +1,16 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.md
+!README.md
+.cursor
+.vscode
+coverage
+.DS_Store
+npm-debug.log*
+drizzle
+assets/.aistudio
