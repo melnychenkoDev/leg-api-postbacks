@@ -28,6 +28,8 @@ RUN npm ci --omit=dev --legacy-peer-deps && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 
+RUN chown -R app:app /app
+
 USER app
 
 EXPOSE 3000

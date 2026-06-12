@@ -5,7 +5,6 @@ import path from 'path';
 import jwt from 'jsonwebtoken';
 import { stringify } from 'csv-stringify/sync';
 import TelegramBot from 'node-telegram-bot-api';
-import { createServer as createViteServer } from 'vite';
 import * as dotenv from 'dotenv';
 import { eq, desc } from 'drizzle-orm';
 
@@ -539,6 +538,7 @@ app.get('/health', (_req, res) => {
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -557,4 +557,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error('Failed to start server:', error);
+  process.exit(1);
+});
