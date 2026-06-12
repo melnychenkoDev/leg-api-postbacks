@@ -12,6 +12,7 @@ import { db } from './src/db/index.js';
 import {
   leads,
   telegramRules,
+  telegramChats,
   adminUsers,
   adminLogs,
   apiTokens,
@@ -28,6 +29,7 @@ import { hasPermission, type AuthUser, type Permission, type Role } from './src/
 import { parseLeadFilters, queryLeads } from './src/lib/leads-query.js';
 import { forwardToAnalytics } from './src/lib/analytics.js';
 import { formatPostbackMessage, routeTelegramNotifications } from './src/lib/postback.js';
+import { registerChatTracker, listActiveChats } from './src/lib/chat-tracker.js';
 
 dotenv.config();
 
@@ -59,7 +61,10 @@ setInterval(() => {
   }
 }, 60_000).unref();
 
-const bot = BOT_TOKEN ? new TelegramBot(BOT_TOKEN, { polling: false }) : null;
+const bot = BOT_TOKEN ? new TelegramBot(BOT_TOKEN, { polling: true }) : null;
+if (bot) {
+  registerChatTracker(bot);
+}
 
 interface AuthRequest extends express.Request {
   user?: AuthUser;
@@ -356,6 +361,16 @@ app.get('/api/leads', authenticateToken, requirePermission('view_leads'), async 
   }
 });
 
+// --- ADMIN: TELEGRAM CHATS (auto-discovered) ---
+app.get('/api/chats', authenticateToken, requirePermission('manage_rules'), async (_req, res) => {
+  try {
+    const chats = await listActiveChats();
+    res.json(chats);
+  } catch {
+    res.status(500).json({ error: 'Database connection failed' });
+  }
+});
+
 // --- ADMIN: ROUTING RULES ---
 app.get('/api/rules', authenticateToken, requirePermission('manage_rules'), async (_req, res) => {
   try {
@@ -367,24 +382,34 @@ app.get('/api/rules', authenticateToken, requirePermission('manage_rules'), asyn
 });
 
 app.post('/api/rules', authenticateToken, requirePermission('manage_rules'), async (req: AuthRequest, res) => {
-  const { partner, conversion_type, target_chat_id } = req.body;
+  const { partner, conversion_type, conversion_types, target_chat_id } = req.body;
 
   if (!target_chat_id) {
     return res.status(400).json({ error: 'target_chat_id is required' });
   }
 
+  // Accept a single conversion_type or an array of conversion_types
+  let types: string[] = Array.isArray(conversion_types) && conversion_types.length > 0
+    ? conversion_types
+    : [conversion_type || '*'];
+  // If '*' is among them, it covers everything
+  if (types.includes('*')) types = ['*'];
+  types = [...new Set(types)];
+
   try {
-    const [rule] = await db
+    const created = await db
       .insert(telegramRules)
-      .values({
-        partner: partner || 'default',
-        conversion_type: conversion_type || '*',
-        target_chat_id,
-      })
+      .values(
+        types.map((type) => ({
+          partner: partner || 'default',
+          conversion_type: type,
+          target_chat_id: String(target_chat_id),
+        }))
+      )
       .returning();
 
-    await logAdminAction(req.user!.id, 'CREATE_RULE', { partner, conversion_type, target_chat_id });
-    res.json(rule);
+    await logAdminAction(req.user!.id, 'CREATE_RULE', { partner, types, target_chat_id });
+    res.json(created);
   } catch {
     res.status(500).json({ error: 'Failed to create rule' });
   }

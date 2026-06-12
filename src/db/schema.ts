@@ -20,6 +20,15 @@ export const telegramRules = pgTable('telegram_rules', {
   created_at: timestamp('created_at').defaultNow(),
 });
 
+export const telegramChats = pgTable('telegram_chats', {
+  id: serial('id').primaryKey(),
+  chat_id: text('chat_id').notNull().unique(),
+  title: text('title'),
+  type: text('type'), // channel | group | supergroup
+  is_active: boolean('is_active').default(true),
+  updated_at: timestamp('updated_at').defaultNow(),
+});
+
 export const adminUsers = pgTable('admin_users', {
   id: serial('id').primaryKey(),
   tg_id: text('tg_id').notNull().unique(),

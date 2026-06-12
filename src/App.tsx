@@ -59,7 +59,12 @@ export default function App() {
     type: '',
   });
 
-  const [newRule, setNewRule] = useState({ partner: 'default', conversion_type: '*', target_chat_id: '' });
+  const [chats, setChats] = useState<any[]>([]);
+  const [newRule, setNewRule] = useState<{ partner: string; conversion_types: string[]; target_chat_id: string }>({
+    partner: 'default',
+    conversion_types: ['*'],
+    target_chat_id: '',
+  });
   const [newAdmin, setNewAdmin] = useState({ tg_id: '', role: 'admin', name: '' });
   const [newTokenName, setNewTokenName] = useState('');
   const [newAnalytics, setNewAnalytics] = useState({ name: '', webhook_url: '', events: '*' });
@@ -137,7 +142,9 @@ export default function App() {
       if (activeTab === 'leads' && canAccess(user, 'view_leads')) {
         await loadLeads();
       } else if (activeTab === 'rules' && canAccess(user, 'manage_rules')) {
-        setRules(await apiFetch('/api/rules'));
+        const [rulesData, chatsData] = await Promise.all([apiFetch('/api/rules'), apiFetch('/api/chats')]);
+        setRules(rulesData);
+        setChats(chatsData);
       } else if (activeTab === 'admins' && canAccess(user, 'manage_admins')) {
         setAdmins(await apiFetch('/api/admins'));
       } else if (activeTab === 'tokens' && canAccess(user, 'manage_tokens')) {
@@ -312,63 +319,113 @@ export default function App() {
         {activeTab === 'rules' && (
           <div>
             <h1 className="text-2xl font-bold text-gray-900 mb-6">Routing Rules</h1>
-            <div className="bg-white rounded-lg shadow p-6 mb-6">
-              <h3 className="font-medium mb-4">Add Rule</h3>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <input
-                  placeholder="Partner (default)"
-                  value={newRule.partner}
-                  onChange={(e) => setNewRule({ ...newRule, partner: e.target.value })}
-                  className="border rounded px-3 py-2"
-                />
-                <select
-                  value={newRule.conversion_type}
-                  onChange={(e) => setNewRule({ ...newRule, conversion_type: e.target.value })}
-                  className="border rounded px-3 py-2"
-                >
-                  {CONVERSION_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  placeholder="Telegram chat_id (-100...)"
-                  value={newRule.target_chat_id}
-                  onChange={(e) => setNewRule({ ...newRule, target_chat_id: e.target.value })}
-                  className="border rounded px-3 py-2"
-                />
-                <button
-                  onClick={async () => {
-                    await apiFetch('/api/rules', { method: 'POST', body: JSON.stringify(newRule) });
-                    setNewRule({ partner: 'default', conversion_type: '*', target_chat_id: '' });
-                    loadTab();
-                  }}
-                  className="bg-blue-600 text-white rounded px-4 py-2 flex items-center justify-center"
-                >
-                  <Plus className="h-4 w-4 mr-2" /> Add
-                </button>
+
+            <div className="bg-blue-50 border border-blue-200 text-blue-800 rounded-lg p-4 mb-6 text-sm">
+              Добавь бота <span className="font-semibold">@{import.meta.env.VITE_TG_BOT_NAME || 'your_bot'}</span> администратором
+              в канал/группу — он появится в списке ниже автоматически.
+            </div>
+
+            <div className="bg-white rounded-lg shadow p-6 mb-6 space-y-4">
+              <h3 className="font-medium">Add Rule</h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Partner</label>
+                  <input
+                    placeholder="default"
+                    value={newRule.partner}
+                    onChange={(e) => setNewRule({ ...newRule, partner: e.target.value })}
+                    className="border rounded px-3 py-2 w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Channel</label>
+                  <select
+                    value={newRule.target_chat_id}
+                    onChange={(e) => setNewRule({ ...newRule, target_chat_id: e.target.value })}
+                    className="border rounded px-3 py-2 w-full"
+                  >
+                    <option value="">— выбери канал —</option>
+                    {chats.map((c) => (
+                      <option key={c.chat_id} value={c.chat_id}>
+                        {c.title} ({c.chat_id})
+                      </option>
+                    ))}
+                  </select>
+                  {chats.length === 0 && (
+                    <p className="text-xs text-gray-400 mt-1">Каналы не найдены. Добавь бота админом в канал.</p>
+                  )}
+                </div>
               </div>
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-2">Events</label>
+                <div className="flex flex-wrap gap-2">
+                  {CONVERSION_TYPES.map((t) => {
+                    const label = t === '*' ? 'All' : t;
+                    const active = newRule.conversion_types.includes(t);
+                    return (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => {
+                          setNewRule((prev) => {
+                            if (t === '*') return { ...prev, conversion_types: ['*'] };
+                            const without = prev.conversion_types.filter((x) => x !== '*');
+                            const next = without.includes(t)
+                              ? without.filter((x) => x !== t)
+                              : [...without, t];
+                            return { ...prev, conversion_types: next.length ? next : ['*'] };
+                          });
+                        }}
+                        className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                          active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <button
+                onClick={async () => {
+                  if (!newRule.target_chat_id) {
+                    alert('Выбери канал');
+                    return;
+                  }
+                  await apiFetch('/api/rules', { method: 'POST', body: JSON.stringify(newRule) });
+                  setNewRule({ partner: 'default', conversion_types: ['*'], target_chat_id: '' });
+                  loadTab();
+                }}
+                className="bg-blue-600 text-white rounded px-4 py-2 flex items-center justify-center"
+              >
+                <Plus className="h-4 w-4 mr-2" /> Add Rule
+              </button>
             </div>
 
             <div className="space-y-3">
-              {rules.map((r) => (
-                <div key={r.id} className="bg-white rounded-lg shadow p-4 flex justify-between items-center">
-                  <div>
-                    <span className="font-bold">{r.partner}</span> → [{r.conversion_type}] →{' '}
-                    <span className="text-blue-600">{r.target_chat_id}</span>
+              {rules.map((r) => {
+                const chat = chats.find((c) => c.chat_id === r.target_chat_id);
+                return (
+                  <div key={r.id} className="bg-white rounded-lg shadow p-4 flex justify-between items-center">
+                    <div>
+                      <span className="font-bold">{r.partner}</span> → [{r.conversion_type === '*' ? 'All' : r.conversion_type}] →{' '}
+                      <span className="text-blue-600">{chat ? `${chat.title} (${r.target_chat_id})` : r.target_chat_id}</span>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        await apiFetch(`/api/rules/${r.id}`, { method: 'DELETE' });
+                        loadTab();
+                      }}
+                      className="text-red-500 hover:text-red-700"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
-                  <button
-                    onClick={async () => {
-                      await apiFetch(`/api/rules/${r.id}`, { method: 'DELETE' });
-                      loadTab();
-                    }}
-                    className="text-red-500 hover:text-red-700"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
