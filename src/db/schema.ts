@@ -8,6 +8,7 @@ export const leads = pgTable('leads', {
   sumdep: numeric('sumdep'),
   tg_id: text('tg_id'),
   tg_username: text('tg_username'),
+  wtd_status: text('wtd_status'), // e.g. pending, approved, declined
   click_id: text('click_id'),
   partner: text('partner'),
   created_at: timestamp('created_at').defaultNow(),
@@ -67,9 +68,9 @@ export const analyticsIntegrations = pgTable('analytics_integrations', {
   created_at: timestamp('created_at').defaultNow(),
 });
 
-// Global message fields config (single row, id=1)
+// Per-type message fields config (single row). fields = { REG: [...], FTD: [...], DEP: [...], WTD: [...] }
 export const messageSettings = pgTable('message_settings', {
   id: serial('id').primaryKey(),
-  fields: jsonb('fields').$type<string[]>().default(['type', 'trader_id', 'country', 'sumdep', 'tg_id', 'tg_username', 'partner', 'click_id']),
+  fields: jsonb('fields').$type<Record<string, string[]>>().default({}),
   updated_at: timestamp('updated_at').defaultNow(),
 });

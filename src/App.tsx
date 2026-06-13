@@ -64,7 +64,7 @@ export default function App() {
     type: '',
   });
 
-  const [msgFields, setMsgFields] = useState<string[]>([]);
+  const [msgSettings, setMsgSettings] = useState<Record<string, string[]>>({});
   const [allMsgFields, setAllMsgFields] = useState<string[]>([]);
 
   const [chats, setChats] = useState<any[]>([]);
@@ -166,7 +166,7 @@ export default function App() {
         setLogsMeta({ total: d.total || 0, page: d.page || 1, pages: d.pages || 1 });
       } else if (activeTab === 'msg-settings' && canAccess(user, 'manage_rules')) {
         const data = await apiFetch('/api/message-settings');
-        setMsgFields(data.fields || []);
+        setMsgSettings(data.settings || {});
         setAllMsgFields(data.allFields || []);
       }
     } catch (e: any) {
@@ -319,7 +319,7 @@ export default function App() {
             </div>
 
             <DataTable
-              headers={['Date', 'Type', 'Deposit', 'Country', 'Trader ID', 'Partner', 'TG ID', 'TG Username', 'Click ID']}
+              headers={['Date', 'Type', 'Deposit', 'Country', 'Trader ID', 'Partner', 'TG ID', 'TG Username', 'WTD Status', 'Click ID']}
               rows={leads.map((lead) => [
                 new Date(lead.created_at).toLocaleString(),
                 lead.type,
@@ -329,6 +329,7 @@ export default function App() {
                 lead.partner,
                 lead.tg_id,
                 lead.tg_username ? `@${lead.tg_username}` : '—',
+                lead.wtd_status || '—',
                 lead.click_id,
               ])}
             />
@@ -783,11 +784,11 @@ export default function App() {
 
         {activeTab === 'msg-settings' && canAccess(user, 'manage_rules') && (
           <MsgSettingsTab
-            msgFields={msgFields}
+            msgSettings={msgSettings}
             allMsgFields={allMsgFields}
-            onSave={async (fields) => {
-              await apiFetch('/api/message-settings', { method: 'PUT', body: JSON.stringify({ fields }) });
-              setMsgFields(fields);
+            onSave={async (settings) => {
+              await apiFetch('/api/message-settings', { method: 'PUT', body: JSON.stringify({ settings }) });
+              setMsgSettings(settings);
             }}
           />
         )}
@@ -803,37 +804,71 @@ const FIELD_META: Record<string, { label: string; description: string }> = {
   sumdep:      { label: 'Сумма',          description: 'Сумма депозита / вывода' },
   tg_id:       { label: 'Telegram ID',    description: 'Числовой ID в Telegram' },
   tg_username: { label: 'TG Username',    description: 'Никнейм @username в Telegram' },
+  wtd_status:  { label: 'Статус вывода',  description: 'pending / approved / declined' },
   partner:     { label: 'Партнёр',        description: 'Имя партнёрки (partner=)' },
   click_id:    { label: 'Click ID',       description: 'ID клика (click_id=)' },
 };
 
+const CONVERSION_TYPE_TABS = ['REG', 'FTD', 'DEP', 'WTD'] as const;
+type ConvType = typeof CONVERSION_TYPE_TABS[number];
+
+const FIELD_EXAMPLES: Record<string, string> = {
+  type: '', // filled per tab
+  trader_id:   '🆔12345',
+  country:     '🌍UA',
+  sumdep:      '💰250',
+  tg_id:       '👤987654321',
+  tg_username: '📎@trader_nick',
+  wtd_status:  '🔖⏳ pending',
+  partner:     '🤝MyAffiliate',
+  click_id:    '🔗abc123',
+};
+const TYPE_PREVIEW: Record<string, string> = {
+  REG: '☑️REG', FTD: '✅FTD', DEP: '✅🔄DEP', WTD: '💸WTD',
+};
+
+function buildPreview(fields: string[], convType: ConvType): string {
+  return fields
+    .map((f) => f === 'type' ? TYPE_PREVIEW[convType] : FIELD_EXAMPLES[f] ?? f)
+    .filter(Boolean)
+    .join(' ');
+}
+
 function MsgSettingsTab({
-  msgFields,
+  msgSettings,
   allMsgFields,
   onSave,
 }: {
-  msgFields: string[];
+  msgSettings: Record<string, string[]>;
   allMsgFields: string[];
-  onSave: (fields: string[]) => Promise<void>;
+  onSave: (settings: Record<string, string[]>) => Promise<void>;
 }) {
-  const [selected, setSelected] = useState<string[]>(msgFields);
+  const fields = allMsgFields.length > 0 ? allMsgFields : Object.keys(FIELD_META);
+  const [activeType, setActiveType] = useState<ConvType>('REG');
+  const [localSettings, setLocalSettings] = useState<Record<string, string[]>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => { setSelected(msgFields); }, [msgFields]);
+  useEffect(() => { setLocalSettings(msgSettings); setSaved(false); }, [msgSettings]);
+
+  const currentFields = localSettings[activeType] ?? [];
 
   const toggle = (field: string) => {
-    if (field === 'type') return; // type is always shown
-    setSelected((prev) =>
-      prev.includes(field) ? prev.filter((f) => f !== field) : [...prev, field]
-    );
+    if (field === 'type') return;
+    const cur = localSettings[activeType] ?? [];
+    const next = cur.includes(field) ? cur.filter((f) => f !== field) : [...cur, field];
+    setLocalSettings((prev) => ({ ...prev, [activeType]: next }));
     setSaved(false);
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const ordered = (allMsgFields.length > 0 ? allMsgFields : Object.keys(FIELD_META)).filter((f) => selected.includes(f));
+      // Preserve order from allFields
+      const ordered: Record<string, string[]> = {};
+      for (const t of CONVERSION_TYPE_TABS) {
+        ordered[t] = fields.filter((f) => (localSettings[t] ?? []).includes(f));
+      }
       await onSave(ordered);
       setSaved(true);
     } finally {
@@ -841,47 +876,55 @@ function MsgSettingsTab({
     }
   };
 
-  const previewFields = allMsgFields.length > 0 ? allMsgFields : Object.keys(FIELD_META);
-  const preview = previewFields
-    .filter((f) => selected.includes(f))
-    .map((f) => {
-      const examples: Record<string, string> = {
-        type: '✅FTD',
-        trader_id: '🆔12345',
-        country: '🌍UA',
-        sumdep: '💰250',
-        tg_id: '👤987654321',
-        tg_username: '📎@trader_nick',
-        partner: '🤝MyAffiliate',
-        click_id: '🔗abc123',
-      };
-      return examples[f] || f;
-    })
-    .join(' ');
+  const TAB_COLOR: Record<ConvType, string> = {
+    REG: 'bg-slate-600', FTD: 'bg-green-600', DEP: 'bg-blue-600', WTD: 'bg-red-600',
+  };
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-2">Message Settings</h1>
-      <p className="text-gray-500 mb-6 text-sm">Настрой какие поля включать в сообщение Telegram при получении постбека.</p>
+      <p className="text-gray-500 mb-6 text-sm">Настрой какие поля включать в Telegram-сообщение для каждого типа конверсии.</p>
+
+      {/* Type tabs */}
+      <div className="flex gap-2 mb-6">
+        {CONVERSION_TYPE_TABS.map((t) => (
+          <button
+            key={t}
+            onClick={() => setActiveType(t)}
+            className={`px-5 py-2 rounded-lg font-semibold text-sm transition-colors ${
+              activeType === t
+                ? `${TAB_COLOR[t]} text-white shadow`
+                : 'bg-white text-gray-600 border hover:border-gray-400'
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
 
       <div className="bg-white rounded-lg shadow p-6 mb-6">
-        <h3 className="font-semibold text-gray-800 mb-4">Поля сообщения</h3>
+        <h3 className="font-semibold text-gray-800 mb-4">
+          Поля для&nbsp;
+          <span className={`inline-block px-2 py-0.5 rounded text-sm text-white ${TAB_COLOR[activeType]}`}>{activeType}</span>
+        </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {(allMsgFields.length > 0 ? allMsgFields : Object.keys(FIELD_META)).map((field) => {
+          {fields.map((field) => {
             const meta = FIELD_META[field] || { label: field, description: '' };
-            const isChecked = selected.includes(field);
+            const isChecked = currentFields.includes(field);
             const isLocked = field === 'type';
+            // wtd_status only makes sense for WTD
+            const isDimmed = field === 'wtd_status' && activeType !== 'WTD';
             return (
               <label
                 key={field}
                 className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                   isChecked ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
-                } ${isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                } ${isLocked || isDimmed ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <input
                   type="checkbox"
                   checked={isChecked}
-                  disabled={isLocked}
+                  disabled={isLocked || isDimmed}
                   onChange={() => toggle(field)}
                   className="mt-0.5 h-4 w-4 text-blue-600 rounded"
                 />
@@ -896,18 +939,23 @@ function MsgSettingsTab({
       </div>
 
       <div className="bg-white rounded-lg shadow p-6 mb-6">
-        <h3 className="font-semibold text-gray-800 mb-3">Предпросмотр сообщения</h3>
-        <div className="bg-gray-900 text-green-400 rounded-lg p-4 font-mono text-sm break-all">
-          {preview || <span className="text-gray-500">Выбери хотя бы одно поле</span>}
+        <h3 className="font-semibold text-gray-800 mb-3">
+          Предпросмотр&nbsp;
+          <span className={`inline-block px-2 py-0.5 rounded text-sm text-white ${TAB_COLOR[activeType]}`}>{activeType}</span>
+        </h3>
+        <div className="bg-gray-900 text-green-400 rounded-lg p-4 font-mono text-sm break-all min-h-[48px]">
+          {currentFields.length > 0
+            ? buildPreview(currentFields, activeType)
+            : <span className="text-gray-500">Выбери хотя бы одно поле</span>}
         </div>
       </div>
 
       <button
         onClick={handleSave}
-        disabled={saving || selected.length === 0}
-        className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+        disabled={saving}
+        className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
       >
-        {saving ? 'Сохраняем...' : saved ? '✓ Сохранено' : 'Сохранить настройки'}
+        {saving ? 'Сохраняем...' : saved ? '✓ Сохранено' : 'Сохранить все настройки'}
       </button>
     </div>
   );

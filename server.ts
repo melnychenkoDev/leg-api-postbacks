@@ -29,7 +29,7 @@ import {
 import { hasPermission, type AuthUser, type Permission, type Role } from './src/lib/permissions.js';
 import { parseLeadFilters, queryLeads } from './src/lib/leads-query.js';
 import { forwardToAnalytics } from './src/lib/analytics.js';
-import { formatPostbackMessage, routeTelegramNotifications, DEFAULT_MESSAGE_FIELDS, ALL_MESSAGE_FIELDS, type PostbackParams } from './src/lib/postback.js';
+import { formatPostbackMessage, routeTelegramNotifications, DEFAULT_MSG_SETTINGS, ALL_MESSAGE_FIELDS, getDefaultFieldsForType, type PostbackParams } from './src/lib/postback.js';
 import { registerChatTracker, listActiveChats } from './src/lib/chat-tracker.js';
 
 dotenv.config();
@@ -141,22 +141,27 @@ const ensureSuperAdmin = async () => {
 
 ensureSuperAdmin();
 
-// Cache message fields (invalidated on settings update)
-let cachedMessageFields: string[] | null = null;
+// Per-type message fields cache (invalidated on settings update)
+let cachedMsgSettings: Record<string, string[]> | null = null;
 
-async function getMessageFields(): Promise<string[]> {
-  if (cachedMessageFields) return cachedMessageFields;
+async function getMsgSettings(): Promise<Record<string, string[]>> {
+  if (cachedMsgSettings) return cachedMsgSettings;
   try {
     const rows = await db.select().from(messageSettings);
-    if (rows.length > 0 && Array.isArray(rows[0].fields)) {
-      cachedMessageFields = rows[0].fields as string[];
+    if (rows.length > 0 && rows[0].fields && !Array.isArray(rows[0].fields)) {
+      cachedMsgSettings = rows[0].fields as Record<string, string[]>;
     } else {
-      cachedMessageFields = DEFAULT_MESSAGE_FIELDS;
+      cachedMsgSettings = DEFAULT_MSG_SETTINGS;
     }
   } catch {
-    cachedMessageFields = DEFAULT_MESSAGE_FIELDS;
+    cachedMsgSettings = DEFAULT_MSG_SETTINGS;
   }
-  return cachedMessageFields;
+  return cachedMsgSettings;
+}
+
+async function getMessageFieldsForType(type: string): Promise<string[]> {
+  const settings = await getMsgSettings();
+  return settings[type] ?? getDefaultFieldsForType(type);
 }
 
 // --- POSTBACK ---
@@ -169,6 +174,7 @@ app.all('/api/postback', async (req, res) => {
   const sumdep = String(params.sumdep || '0');
   const tg_id = String(params.tg_id || 'N/A');
   const tg_username = String(params.tg_username || params.username || 'N/A');
+  const wtd_status = String(params.wtd_status || params.status || 'N/A');
   const click_id = String(params.click_id || 'N/A');
   const partner = String(params.partner || 'default');
 
@@ -180,11 +186,11 @@ app.all('/api/postback', async (req, res) => {
   try {
     const [savedLead] = await db
       .insert(leads)
-      .values({ type, trader_id, country, sumdep, tg_id, tg_username, click_id, partner })
+      .values({ type, trader_id, country, sumdep, tg_id, tg_username, wtd_status: type === 'WTD' ? wtd_status : null, click_id, partner })
       .returning();
 
-    const pbParams: PostbackParams = { type, trader_id, country, sumdep, tg_id, tg_username, click_id, partner };
-    const fields = await getMessageFields();
+    const pbParams: PostbackParams = { type, trader_id, country, sumdep, tg_id, tg_username, wtd_status, click_id, partner };
+    const fields = await getMessageFieldsForType(type);
     const text = formatPostbackMessage(pbParams, fields);
 
     await routeTelegramNotifications(bot, BOT_TOKEN, partner, type, text);
@@ -657,32 +663,39 @@ app.delete('/api/analytics/:id', authenticateToken, requirePermission('manage_an
 app.get('/api/message-settings', authenticateToken, requirePermission('manage_rules'), async (_req, res) => {
   try {
     const rows = await db.select().from(messageSettings);
-    if (rows.length > 0) {
-      res.json({ fields: rows[0].fields, allFields: ALL_MESSAGE_FIELDS });
-    } else {
-      res.json({ fields: DEFAULT_MESSAGE_FIELDS, allFields: ALL_MESSAGE_FIELDS });
+    const stored = rows.length > 0 && !Array.isArray(rows[0].fields) ? rows[0].fields as Record<string, string[]> : {};
+    // Merge defaults with stored overrides
+    const settings: Record<string, string[]> = { ...DEFAULT_MSG_SETTINGS };
+    for (const [k, v] of Object.entries(stored)) {
+      if (Array.isArray(v)) settings[k] = v;
     }
+    res.json({ settings, allFields: ALL_MESSAGE_FIELDS });
   } catch {
     res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
 app.put('/api/message-settings', authenticateToken, requirePermission('manage_rules'), async (req: AuthRequest, res) => {
-  const { fields } = req.body;
-  if (!Array.isArray(fields) || fields.length === 0) {
-    return res.status(400).json({ error: 'fields must be a non-empty array' });
+  const { settings } = req.body;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    return res.status(400).json({ error: 'settings must be an object { TYPE: string[] }' });
   }
-  const validFields = fields.filter((f: string) => ALL_MESSAGE_FIELDS.includes(f));
+  const validated: Record<string, string[]> = {};
+  for (const [type, fields] of Object.entries(settings)) {
+    if (Array.isArray(fields) && fields.length > 0) {
+      validated[type] = (fields as string[]).filter((f) => ALL_MESSAGE_FIELDS.includes(f));
+    }
+  }
   try {
     const rows = await db.select().from(messageSettings);
     if (rows.length > 0) {
-      await db.update(messageSettings).set({ fields: validFields, updated_at: new Date() }).where(eq(messageSettings.id, rows[0].id));
+      await db.update(messageSettings).set({ fields: validated, updated_at: new Date() }).where(eq(messageSettings.id, rows[0].id));
     } else {
-      await db.insert(messageSettings).values({ fields: validFields });
+      await db.insert(messageSettings).values({ fields: validated });
     }
-    cachedMessageFields = validFields;
-    await logAdminAction(req.user!.id, 'UPDATE_MESSAGE_SETTINGS', { fields: validFields });
-    res.json({ fields: validFields });
+    cachedMsgSettings = validated;
+    await logAdminAction(req.user!.id, 'UPDATE_MESSAGE_SETTINGS', { settings: validated });
+    res.json({ settings: validated });
   } catch {
     res.status(500).json({ error: 'Failed to save settings' });
   }

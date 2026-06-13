@@ -10,6 +10,7 @@ export interface PostbackParams {
   sumdep: string;
   tg_id: string;
   tg_username: string;
+  wtd_status: string;
   click_id: string;
   partner: string;
 }
@@ -21,22 +22,38 @@ const TYPE_EMOJI: Record<string, string> = {
   WTD: '💸WTD',
 };
 
-const FIELD_LABELS: Record<string, { emoji: string; label: string; getValue: (p: PostbackParams) => string }> = {
-  type:         { emoji: '',  label: '',         getValue: p => TYPE_EMOJI[p.type] || `❓${p.type}` },
-  trader_id:    { emoji: '🆔', label: 'ID',      getValue: p => p.trader_id },
-  country:      { emoji: '🌍', label: 'GEO',     getValue: p => p.country },
-  sumdep:       { emoji: '💰', label: 'SUM',     getValue: p => p.sumdep },
-  tg_id:        { emoji: '👤', label: 'TG_ID',   getValue: p => p.tg_id },
-  tg_username:  { emoji: '📎', label: 'TG',      getValue: p => p.tg_username !== 'N/A' ? `@${p.tg_username}` : 'N/A' },
-  partner:      { emoji: '🤝', label: 'Partner', getValue: p => p.partner },
-  click_id:     { emoji: '🔗', label: 'Click',   getValue: p => p.click_id },
+const WTD_STATUS_EMOJI: Record<string, string> = {
+  pending:  '⏳ pending',
+  approved: '✅ approved',
+  declined: '❌ declined',
+};
+
+const FIELD_LABELS: Record<string, { emoji: string; getValue: (p: PostbackParams) => string }> = {
+  type:       { emoji: '',   getValue: p => TYPE_EMOJI[p.type] || `❓${p.type}` },
+  trader_id:  { emoji: '🆔', getValue: p => p.trader_id },
+  country:    { emoji: '🌍', getValue: p => p.country },
+  sumdep:     { emoji: '💰', getValue: p => p.sumdep },
+  tg_id:      { emoji: '👤', getValue: p => p.tg_id },
+  tg_username:{ emoji: '📎', getValue: p => p.tg_username !== 'N/A' ? `@${p.tg_username}` : 'N/A' },
+  wtd_status: { emoji: '🔖', getValue: p => WTD_STATUS_EMOJI[p.wtd_status?.toLowerCase()] || p.wtd_status },
+  partner:    { emoji: '🤝', getValue: p => p.partner },
+  click_id:   { emoji: '🔗', getValue: p => p.click_id },
 };
 
 export const ALL_MESSAGE_FIELDS = Object.keys(FIELD_LABELS);
 
-export const DEFAULT_MESSAGE_FIELDS = ['type', 'trader_id', 'country', 'sumdep', 'tg_id', 'tg_username'];
+export const DEFAULT_MSG_SETTINGS: Record<string, string[]> = {
+  REG: ['type', 'trader_id', 'country', 'tg_id', 'tg_username'],
+  FTD: ['type', 'trader_id', 'country', 'sumdep', 'tg_id', 'tg_username'],
+  DEP: ['type', 'trader_id', 'country', 'sumdep', 'tg_id', 'tg_username'],
+  WTD: ['type', 'trader_id', 'country', 'sumdep', 'wtd_status', 'tg_id', 'tg_username'],
+};
 
-export function formatPostbackMessage(params: PostbackParams, fields: string[] = DEFAULT_MESSAGE_FIELDS): string {
+export function getDefaultFieldsForType(type: string): string[] {
+  return DEFAULT_MSG_SETTINGS[type] ?? DEFAULT_MSG_SETTINGS['FTD'];
+}
+
+export function formatPostbackMessage(params: PostbackParams, fields: string[]): string {
   const parts: string[] = [];
 
   for (const field of fields) {
