@@ -22,12 +22,6 @@ const TYPE_EMOJI: Record<string, string> = {
   WTD: '💸WTD',
 };
 
-const WTD_STATUS_EMOJI: Record<string, string> = {
-  pending:  '⏳ pending',
-  approved: '✅ approved',
-  declined: '❌ declined',
-};
-
 const FIELD_LABELS: Record<string, { emoji: string; getValue: (p: PostbackParams) => string }> = {
   type:       { emoji: '',   getValue: p => TYPE_EMOJI[p.type] || `❓${p.type}` },
   trader_id:  { emoji: '🆔', getValue: p => p.trader_id },
@@ -35,7 +29,7 @@ const FIELD_LABELS: Record<string, { emoji: string; getValue: (p: PostbackParams
   sumdep:     { emoji: '💰', getValue: p => p.sumdep },
   tg_id:      { emoji: '👤', getValue: p => p.tg_id },
   tg_username:{ emoji: '📎', getValue: p => p.tg_username !== 'N/A' ? `@${p.tg_username}` : 'N/A' },
-  wtd_status: { emoji: '🔖', getValue: p => WTD_STATUS_EMOJI[p.wtd_status?.toLowerCase()] || p.wtd_status },
+  wtd_status: { emoji: '🔖', getValue: p => p.wtd_status }, // any value from partner passed as-is
   partner:    { emoji: '🤝', getValue: p => p.partner },
   click_id:   { emoji: '🔗', getValue: p => p.click_id },
 };
